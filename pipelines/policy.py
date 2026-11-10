@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPSConnection
+from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
+from urllib3.util import connection
 from urllib3.connectionpool import HTTPSConnectionPool
 
 from . import config
@@ -75,14 +77,24 @@ def resolve_public_ipv4(host: str) -> str:
 
 
 class _PinnedHTTPSConnection(HTTPSConnection):
-    """Connects to the validated IP; TLS (SNI, certificate) still uses the hostname."""
+    """Opens the socket to the validated IP. self.host stays the hostname, so the Host header,
+    SNI and certificate check all use the hostname (urllib3 derives self.host from _dns_host,
+    so _dns_host must not be overwritten)."""
 
     def _new_conn(self):
         host = _norm(self.host)
         if host not in config.ALLOWED_PROVIDER_HOSTS:
             raise _deny("host_not_allowed", host=host)
-        self._dns_host = resolve_public_ipv4(host)
-        return super()._new_conn()
+        ip = resolve_public_ipv4(host)
+        try:
+            return connection.create_connection(
+                (ip, self.port), self.timeout,
+                source_address=self.source_address, socket_options=self.socket_options,
+            )
+        except socket.timeout as e:
+            raise ConnectTimeoutError(self, f"Connection to {host} timed out.") from e
+        except OSError as e:
+            raise NewConnectionError(self, f"Failed to establish a new connection: {e}") from e
 
 
 class _PinnedPool(HTTPSConnectionPool):

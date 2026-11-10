@@ -1,5 +1,6 @@
 """FastAPI app: GET /health, POST /v1/explore and POST /v1/download (API key required)."""
 import hmac
+import logging
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -27,6 +28,7 @@ if config.CORS_ORIGINS:
     )
 
 NO_STORE = {"Cache-Control": "no-store, private"}
+log = logging.getLogger("pipelines")
 
 
 def require_key(x_pipelines_key: str | None = Header(default=None, alias="X-Pipelines-Key")):
@@ -57,6 +59,8 @@ async def _validation_error(_: Request, exc: RequestValidationError):
 
 @app.exception_handler(Exception)
 async def _unexpected(_: Request, exc: Exception):
+    # Traceback to Cloud Logging for debugging; request bodies and headers are never logged.
+    log.error("Unhandled error", exc_info=exc)
     return JSONResponse(status_code=500, headers=NO_STORE, content={
         "code": "internal_error", "message": "Something went wrong.", "detail": {"error": type(exc).__name__},
     })
