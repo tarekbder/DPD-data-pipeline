@@ -1,0 +1,5 @@
+# Only the pipelines package goes into the image.
+*
+!pipelines/
+pipelines/**/__pycache__
+pipelines/**/*.pyc
