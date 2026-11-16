@@ -42,11 +42,6 @@ Example (token shortened):
 Only these hosts are fetched; anything else gets `403 endpoint_not_allowed`. New providers are added on request (config change + redeploy).
 
 ```
-annualtrafficnumbers.connector.mds.think-it.io
-opendatahub-prod-1.connector.mds.think-it.io
-ua-mds-prod-1.connector.mds.think-it.io
-connector-mds-prod.edc.aws.bmw.cloud
-```
 
 ## Endpoints
 
