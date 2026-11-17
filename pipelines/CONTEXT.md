@@ -14,7 +14,7 @@ FastAPI app with two pipelines and the modules they share. Behaviour is specifie
 | `models.py` | Pydantic: pagination union, `schema.source`, request bodies, override loader | api, export, fetch |
 | `fetch.py` | HTTP GET with size/time/page guards, policy check on every page, no redirects, no compressed responses; pagination detection and following; partial-data hint | both pipelines |
 | `formats.py` | Format detection and sniffing; zip, JSON record path, GeoJSON rows, CSV page merge, XML parse/flatten/merge | both pipelines |
-| `explore/pipeline.py` | Pipeline 1 (pandas): load → exclude nested → leading zeros → normalize → type → stats → JSON | api |
+| `explore/pipeline.py` | Pipeline 1 (pandas): load → exclude nested → leading zeros → raw view → normalize → type → stats → JSON (head/tail 50, or 20 under 100 rows) | api |
 | `export/pipeline.py` | Pipeline 2 (Polars): Route A (original format) / Route B (convert), flatten nested, Excel limits, writers | api |
 
 ## If you change this, it hits

@@ -64,6 +64,18 @@ def _note() -> str:
             f"({', '.join(config.PLACEHOLDERS_RAW)}) to NaN.")
 
 
+def _raw_note(fmt: str) -> str:
+    note = "Computed on the values as read from the source: no placeholders normalized, no types converted."
+    if fmt in ("csv", "tsv", "xml"):
+        note += " All columns are read as strings."
+    return note
+
+
+def preview_rows(n_rows: int) -> int:
+    """Rows sent for head and for tail: 50, or 20 when the dataset has fewer than 100 rows."""
+    return 50 if n_rows >= 100 else 20
+
+
 # ------------------------------------------------------------------ loading
 
 def _read_delimited(data: bytes, sep: str) -> pd.DataFrame:
@@ -172,6 +184,30 @@ def _type_column(s: pd.Series, leading_zeros: bool):
     return "categorical", s, 0
 
 
+def _raw_type(s: pd.Series) -> str:
+    """Native types only: no parsing of strings."""
+    if pd.api.types.is_bool_dtype(s) or _all_bool(s):
+        return "categorical"
+    if pd.api.types.is_numeric_dtype(s):
+        return "numeric"
+    return "categorical"
+
+
+def _info_columns(frame: pd.DataFrame, types: dict, lz: dict, coerced: dict) -> list:
+    return [
+        {
+            "column": c,
+            "dtype": str(frame[c].dtype),
+            "type": types[c],
+            "leading_zeros": lz[c],
+            "coerced": int(coerced[c]),
+            "non_null": int(frame[c].notna().sum()),
+            "null_pct": round(float(frame[c].isna().mean() * 100), 2) if len(frame) else 0.0,
+        }
+        for c in types
+    ]
+
+
 def _ranges(df: pd.DataFrame, types: dict) -> dict:
     out = {"numeric": {}, "categorical": {}, "date": {}}
     for c, t in types.items():
@@ -271,6 +307,20 @@ def explore(transfer: Transfer) -> dict:
     # 6. leading zeros (before normalization)
     lz = {c: _leading_zeros(df[c]) for c in analysis_cols}
 
+    # 6b. raw view: summarized before normalization changes df
+    n_preview = preview_rows(len(df))
+    raw_frame = df[analysis_cols]
+    raw_types = {c: _raw_type(raw_frame[c]) for c in analysis_cols}
+    raw_view = {
+        "head": df.head(n_preview).to_dict(orient="records"),
+        "tail": df.tail(n_preview).to_dict(orient="records"),
+        "info": {"note": _raw_note(fmt), "columns": _info_columns(raw_frame, raw_types, lz, dict.fromkeys(raw_types, 0))},
+        "describe": {"note": _raw_note(fmt), "stats": _describe(raw_frame)},
+        "ranges": _ranges(raw_frame.copy(), raw_types),
+    }
+    raw_view = jsonable(raw_view)
+    del raw_frame
+
     # 7. health
     df = _normalize(df)
     excel_allowed = _excel_allowed(df)
@@ -284,18 +334,7 @@ def explore(transfer: Transfer) -> dict:
 
     # 9-10. explore and ranges
     analyzed = df[analysis_cols]
-    columns = [
-        {
-            "column": c,
-            "dtype": str(analyzed[c].dtype),
-            "type": types[c],
-            "leading_zeros": lz[c],
-            "coerced": int(coerced[c]),
-            "non_null": int(analyzed[c].notna().sum()),
-            "null_pct": round(float(analyzed[c].isna().mean() * 100), 2) if len(analyzed) else 0.0,
-        }
-        for c in analysis_cols
-    ]
+    columns = _info_columns(analyzed, types, lz, coerced)
 
     # 12. build JSON
     out = {
@@ -316,10 +355,12 @@ def explore(transfer: Transfer) -> dict:
             "missing_cells": missing_cells,
             "total_cells": total_cells,
         },
-        "head": df.head(5).to_dict(orient="records"),
+        "head": df.head(n_preview).to_dict(orient="records"),
+        "tail": df.tail(n_preview).to_dict(orient="records"),
         "info": {"note": _note(), "columns": columns},
         "describe": {"note": _note(), "stats": _describe(analyzed)},
         "ranges": _ranges(analyzed, types),
+        "raw": raw_view,
         "schema": {
             "source": {
                 "format": fmt,

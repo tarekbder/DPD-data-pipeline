@@ -1,11 +1,11 @@
 # Dataset pipelines — API contract (v1)
 
-For the UI developer. Status: **v1, deployed and tested** (2026-11-11) against a live `HttpData-PULL` transfer (Copenhagen bicycle parking, provider `annualtrafficnumbers`). Open for changes.
+For the UI developer. Status: **v1, deployed and tested** (2026-11-11) against a live `HttpData-PULL` transfer (Copenhagen bicycle parking, provider `annualtrafficnumbers`). Revised 2026-11-16 (CORS, pagination). Open for changes.
 
 ## Basics
 
 - **Base URL:** sent separately (a `https://…run.app` URL for now; `https://pipelines.<domain>` once the domain exists).
-- **Server-to-server only.** Call from the UI's Next.js server route, never from the browser. The API key and the provider token must not reach the client. No CORS is configured.
+- **Server-to-server only.** Call from the UI's Next.js server route, never from the browser. The API key and the provider token must not reach the client. CORS is **off** by default. It can be turned on (`CORS_ORIGINS`: POST only; exposes `Content-Disposition` and `X-Export-Warning`), but that isn't the intended setup.
 - **Auth:** every request except `/health` needs the header `X-Pipelines-Key: <key>`. Missing or wrong → `401`. The key is sent separately; keep it in a server env var.
 - **Requests:** JSON (`Content-Type: application/json`). Unknown fields are rejected.
 - **Responses:** `Cache-Control: no-store`. Don't cache them.
@@ -55,13 +55,23 @@ Body: `{ "edr": { … } }`. `200` with:
 |---|---|
 | `meta` | `asset_id`, `format` (`csv` `tsv` `json` `geojson` `xml`), `container` (`"zip"` or `null`), `rows`, `cols`, `pages`, `partial_warning`, `excel_allowed`, `excluded_columns`, `generated_at` |
 | `health` | `missing_pct`, `missing_cells`, `total_cells` |
-| `head` | First 5 rows |
+| `head` | First 50 rows (20 when `meta.rows` < 100) |
+| `tail` | Last 50 rows (20 when `meta.rows` < 100) |
 | `info` | `note`, `columns[]` (`column`, `dtype`, `type`, `leading_zeros`, `coerced`, `non_null`, `null_pct`) |
 | `describe` | `note`, `stats` |
 | `ranges` | Per-column ranges |
-| `schema` | `source`. **Store it and send it back unchanged** to `/v1/download` |
+| `raw` | Same `head`, `tail`, `info`, `describe`, `ranges`, on the values as read (no normalization, native types only; CSV/TSV/XML columns are all strings). Top-level fields are the normalized view |
+| `schema` | `source` (format, delimiter, zip inner file, record path, pagination). **Store it and send it back unchanged** to `/v1/download` |
 
-**`partial_warning: true`** means the provider reports more data than was fetched (e.g. a total of 47,415 records, but only the first page of 100 came through). Show a "partial data" notice. This is expected today: the connector doesn't forward pagination parameters.
+**`partial_warning: true`** means the provider reports more data than was fetched (e.g. a total of 47,415 records, but only the first page of 100 came through). Show a "partial data" notice. `false` doesn't guarantee complete data: it only catches responses with fields like `total`, `count` or `page`.
+
+### Pagination
+
+Handled server-side; the UI does nothing beyond storing `schema`.
+- **Auto-detected:** a next link in the body (`next` / `links.next`) or a `Link: rel="next"` header. Pages are followed until none remains (same origin as `endpoint` only, up to `MAX_PAGES`).
+- **Per asset:** `offset` and `page` schemes are set server-side in `PAGINATION_OVERRIDES` (keyed by `asset_id`, config change + redeploy). Ask for one when a dataset comes back partial.
+- The detected scheme is stored in `schema.source.pagination`, so downloads follow the same pages as explore.
+- **Current blocker:** the connector doesn't forward query parameters, so live transfers return page 1 only, overrides included. The fix is provider-side (`proxyQueryParams: true` on the asset).
 
 ### `POST /v1/download`
 Body: `{ "edr": { … }, "format": "<format>", "schema": <schema from explore> }`.
