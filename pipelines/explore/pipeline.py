@@ -294,21 +294,53 @@ def _in_range(s: pd.Series, limit: float) -> bool:
     return len(vals) > 0 and bool(((vals >= -limit) & (vals <= limit)).mean() >= config.TYPE_PARSE_THRESHOLD)
 
 
+def _cells(lat: np.ndarray, lon: np.ndarray, d: float) -> np.ndarray:
+    """Grid cell id per point for square cells of d degrees."""
+    ky = np.floor((lat - lat.min()) / d).astype(np.int64)
+    kx = np.floor((lon - lon.min()) / d).astype(np.int64)
+    return ky * (int(kx.max()) + 1) + kx
+
+
+def _grid_size(lat: np.ndarray, lon: np.ndarray, limit: int) -> float:
+    """Smallest cell size (degrees) that leaves at most `limit` occupied cells."""
+    span = max(float(lat.max() - lat.min()), float(lon.max() - lon.min()), 1e-9)
+    lo, hi = span / 1e5, span
+    if len(np.unique(_cells(lat, lon, lo))) <= limit:
+        return lo
+    for _ in range(30):
+        mid = (lo * hi) ** 0.5
+        if len(np.unique(_cells(lat, lon, mid))) <= limit:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def _sample(lat: pd.Series, lon: pd.Series):
-    """Valid (lat, lon) pairs, evenly thinned to MAP_MAX_POINTS. Returns (points, total)."""
+    """Valid (lat, lon) points, grid-thinned to MAP_MAX_POINTS.
+
+    Above the cap, a grid of square cells is laid over the points and each occupied
+    cell keeps its first row, with `count` = rows in that cell. Every area with data
+    is shown; density is carried by `count`. Returns (points, total, cell_deg).
+    """
     ok = lat.notna() & lon.notna() & lat.between(-90, 90) & lon.between(-180, 180) & ~((lat == 0) & (lon == 0))
     lat, lon = lat[ok], lon[ok]
     total = int(len(lat))
-    if total > config.MAP_MAX_POINTS:
-        idx = np.linspace(0, total - 1, config.MAP_MAX_POINTS).astype(int)
-        lat, lon = lat.iloc[idx], lon.iloc[idx]
-    rows = lat.index.tolist()
-    points = [[round(float(a), 7), round(float(b), 7), int(r)] for a, b, r in zip(lat, lon, rows)]
-    return points, total
+    rows = np.asarray(lat.index)
+    la, lo = lat.to_numpy(dtype=float), lon.to_numpy(dtype=float)
+    if total <= config.MAP_MAX_POINTS:
+        return [[round(float(a), 7), round(float(b), 7), int(r), 1] for a, b, r in zip(la, lo, rows)], total, None
+
+    d = _grid_size(la, lo, config.MAP_MAX_POINTS)
+    _, first, counts = np.unique(_cells(la, lo, d), return_index=True, return_counts=True)
+    order = np.argsort(first)
+    first, counts = first[order], counts[order]
+    points = [[round(float(la[i]), 7), round(float(lo[i]), 7), int(rows[i]), int(n)] for i, n in zip(first, counts)]
+    return points, total, d
 
 
 def _geo_block(source, lat_col, lon_col, lat: pd.Series, lon: pd.Series):
-    points, total = _sample(lat, lon)
+    points, total, cell_deg = _sample(lat, lon)
     if not points:
         return None
     lats = [p[0] for p in points]
@@ -321,6 +353,7 @@ def _geo_block(source, lat_col, lon_col, lat: pd.Series, lon: pd.Series):
         "point_count": len(points),
         "total_valid": total,
         "sampled": total > len(points),
+        "cell_deg": cell_deg,
         "bounds": {"min_lat": min(lats), "max_lat": max(lats), "min_lon": min(lons), "max_lon": max(lons)},
     }
 
