@@ -27,6 +27,13 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
     "total_valid": 337020,
     "sampled": true,
     "cell_deg": 0.0021,
+    "regions": {
+      "items": [
+        { "city": "Kathmandu", "admin1": "Central Region", "country_code": "NP", "count": 276356, "pct": 82.0 },
+        { "city": "Patan", "admin1": "Central Region", "country_code": "NP", "count": 60664, "pct": 18.0 }
+      ],
+      "other_count": 0
+    },
     "bounds": {
       "min_lat": 27.6057067,
       "max_lat": 27.7497467,
@@ -49,6 +56,7 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
 | `total_valid` | int | Rows with usable coordinates before sampling |
 | `sampled` | bool | `true` when `total_valid > point_count` (points were grid-thinned) |
 | `cell_deg` | number or `null` | Grid cell size in degrees used for thinning. `null` when not thinned |
+| `regions` | object or `null` | Where the rows are. `items[]`: `city`, `admin1` (state/region, may be `null`), `country_code` (ISO alpha-2), `count` (rows), `pct` (of `total_valid`), largest first, max 10. `other_count`: rows in all other places. `null` if the lookup is unavailable |
 | `bounds` | object | `min_lat`, `max_lat`, `min_lon`, `max_lon` of the sent points |
 
 ## What the UI needs to do
@@ -58,8 +66,9 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
 3. **Fit the view to `bounds`** on load.
 4. **Show a sampling note when `sampled` is `true`**, e.g. "Showing 5,000 of 337,020 points".
 5. **Optional: use `count` for density.** Scale marker size or colour by `count`, or feed it as the weight to a heatmap layer. Without it, a depot with 400 rows looks the same as a road passed once.
-6. **Label the source columns** (`lat_column` / `lon_column`) so users know what's plotted. Skip when `null`.
-7. **Add map tile attribution** for whichever tile provider is used (OpenStreetMap requires it).
+6. **List the regions above the map** when `regions` is not `null`: "City, Country · pct%", plus "Other places" when `other_count` > 0. Turn `country_code` into a name with `new Intl.DisplayNames(["en"], { type: "region" }).of(code)`.
+7. **Label the source columns** (`lat_column` / `lon_column`) so users know what's plotted. Skip when `null`.
+8. **Add map tile attribution** for whichever tile provider is used (OpenStreetMap requires it).
 
 ## Watch out for
 
@@ -75,6 +84,7 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
 - Columns are matched by name, case-insensitive: `latitude`/`lat` and `longitude`/`lon`/`lng`/`long`, or names ending in those (`gps_lat`, `position.lng`).
 - Both columns must be numeric, with at least 90% of values in range (lat ±90, lon ±180).
 - If no columns match, GeoJSON `Point` geometry is used.
+- Regions: each point gets the nearest city with 1,000+ inhabitants from the offline GeoNames dataset, weighted by `count`. A point far from any town (sea, countryside) still gets its nearest town, so treat names as approximate.
 - Not mapped: lines, polygons, WKT/WKB strings, projected coordinates (e.g. UTM). These datasets get `geo: null`.
 - Thinning: above `MAP_MAX_POINTS` (default 5,000), a grid of square cells is laid over the points, sized so at most that many cells are occupied. Each occupied cell keeps its first row and a `count`. This guarantees every area with data appears, even sparse ones.
 

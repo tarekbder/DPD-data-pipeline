@@ -339,6 +339,32 @@ def _sample(lat: pd.Series, lon: pd.Series):
     return points, total, d
 
 
+def _regions(points: list, total: int):
+    """City + country per point (offline GeoNames lookup), weighted by each point's row count.
+
+    Returns {"items": [...top MAP_MAX_REGIONS...], "other_count": rows in the rest}, or None when
+    the lookup library isn't installed or fails: regions are optional and never break explore.
+    """
+    try:
+        import reverse_geocoder as rg
+        hits = rg.search([(p[0], p[1]) for p in points], mode=1, verbose=False)
+    except Exception:
+        return None
+    tally = {}
+    for p, h in zip(points, hits):
+        key = (h.get("name") or None, h.get("admin1") or None, h.get("cc") or None)
+        tally[key] = tally.get(key, 0) + p[3]
+    ranked = sorted(tally.items(), key=lambda kv: -kv[1])
+    top = ranked[:config.MAP_MAX_REGIONS]
+    return {
+        "items": [
+            {"city": city, "admin1": admin1, "country_code": cc, "count": int(n), "pct": round(n / total * 100, 1)}
+            for (city, admin1, cc), n in top
+        ],
+        "other_count": int(sum(n for _, n in ranked[len(top):])),
+    }
+
+
 def _geo_block(source, lat_col, lon_col, lat: pd.Series, lon: pd.Series):
     points, total, cell_deg = _sample(lat, lon)
     if not points:
@@ -354,6 +380,7 @@ def _geo_block(source, lat_col, lon_col, lat: pd.Series, lon: pd.Series):
         "total_valid": total,
         "sampled": total > len(points),
         "cell_deg": cell_deg,
+        "regions": _regions(points, total),
         "bounds": {"min_lat": min(lats), "max_lat": max(lats), "min_lon": min(lons), "max_lon": max(lons)},
     }
 

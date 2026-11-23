@@ -27,6 +27,8 @@ TYPE_PARSE_THRESHOLD = _float("TYPE_PARSE_THRESHOLD", 0.9)
 
 # Most points sent in the explore response's "geo" block (grid-thinned above this).
 MAP_MAX_POINTS = _int("MAP_MAX_POINTS", 5000)
+# Most regions (city + country) listed in "geo.regions"; the rest are summed into other_count.
+MAP_MAX_REGIONS = _int("MAP_MAX_REGIONS", 10)
 
 # Optional: comma-separated UI origins. Only needed when UI and server are on different origins.
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
