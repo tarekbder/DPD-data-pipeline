@@ -259,6 +259,102 @@ def _describe(df: pd.DataFrame) -> dict:
     }
 
 
+# ---------------------------------------------------------------------- geo
+
+# Column names (lowercased, separators removed) that hold latitude / longitude.
+LAT_NAMES = ("latitude", "lat", "gpslat", "gpslatitude", "ylat", "latdeg", "latwgs84", "wgs84lat")
+LON_NAMES = ("longitude", "lon", "lng", "long", "gpslon", "gpslng", "gpslongitude", "xlon", "londeg", "lonwgs84", "wgs84lon")
+LAT_SUFFIX = ("latitude", "lat")
+LON_SUFFIX = ("longitude", "lon", "lng")
+
+
+def _key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _leaf(name: str) -> str:
+    """Last part of a flattened name: 'position.lat' -> 'lat', 'gps_lon' -> 'lon'."""
+    return _key(re.split(r"[._\-\s/]", name.strip())[-1]) if name.strip() else ""
+
+
+def _find_coord(cols: list, exact: tuple, suffix: tuple):
+    """Best-named column: exact name first, then a name whose last part matches."""
+    for want in exact:
+        for c in cols:
+            if _key(c) == want:
+                return c
+    for c in cols:
+        if _leaf(c) in suffix:
+            return c
+    return None
+
+
+def _in_range(s: pd.Series, limit: float) -> bool:
+    vals = s.dropna()
+    return len(vals) > 0 and bool(((vals >= -limit) & (vals <= limit)).mean() >= config.TYPE_PARSE_THRESHOLD)
+
+
+def _sample(lat: pd.Series, lon: pd.Series):
+    """Valid (lat, lon) pairs, evenly thinned to MAP_MAX_POINTS. Returns (points, total)."""
+    ok = lat.notna() & lon.notna() & lat.between(-90, 90) & lon.between(-180, 180) & ~((lat == 0) & (lon == 0))
+    lat, lon = lat[ok], lon[ok]
+    total = int(len(lat))
+    if total > config.MAP_MAX_POINTS:
+        idx = np.linspace(0, total - 1, config.MAP_MAX_POINTS).astype(int)
+        lat, lon = lat.iloc[idx], lon.iloc[idx]
+    rows = lat.index.tolist()
+    points = [[round(float(a), 7), round(float(b), 7), int(r)] for a, b, r in zip(lat, lon, rows)]
+    return points, total
+
+
+def _geo_block(source, lat_col, lon_col, lat: pd.Series, lon: pd.Series):
+    points, total = _sample(lat, lon)
+    if not points:
+        return None
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+    return {
+        "source": source,
+        "lat_column": lat_col,
+        "lon_column": lon_col,
+        "points": points,
+        "point_count": len(points),
+        "total_valid": total,
+        "sampled": total > len(points),
+        "bounds": {"min_lat": min(lats), "max_lat": max(lats), "min_lon": min(lons), "max_lon": max(lons)},
+    }
+
+
+def _point_coords(g):
+    """GeoJSON Point -> (lon, lat), else (None, None)."""
+    if isinstance(g, dict) and g.get("type") == "Point":
+        c = g.get("coordinates")
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                return float(c[0]), float(c[1])
+            except (TypeError, ValueError):
+                pass
+    return None, None
+
+
+def _geo(df: pd.DataFrame, types: dict):
+    """Find latitude/longitude columns (or GeoJSON Point geometry) and return map points, or None."""
+    numeric = [c for c, t in types.items() if t == "numeric"]
+    lat_col = _find_coord(numeric, LAT_NAMES, LAT_SUFFIX)
+    lon_col = _find_coord([c for c in numeric if c != lat_col], LON_NAMES, LON_SUFFIX)
+    if lat_col and lon_col and _in_range(df[lat_col], 90) and _in_range(df[lon_col], 180):
+        block = _geo_block("columns", lat_col, lon_col, df[lat_col].astype(float), df[lon_col].astype(float))
+        if block:
+            return block
+
+    if "geometry" in df.columns:
+        pairs = df["geometry"].map(_point_coords)
+        lon = pd.Series([p[0] for p in pairs], index=df.index, dtype=float)
+        lat = pd.Series([p[1] for p in pairs], index=df.index, dtype=float)
+        return _geo_block("geojson", None, None, lat, lon)
+    return None
+
+
 # --------------------------------------------------------------------- main
 
 def explore(transfer: Transfer) -> dict:
@@ -336,6 +432,9 @@ def explore(transfer: Transfer) -> dict:
     analyzed = df[analysis_cols]
     columns = _info_columns(analyzed, types, lz, coerced)
 
+    # 11. map points (lat/lon columns or GeoJSON Point geometry)
+    geo = _geo(df, types)
+
     # 12. build JSON
     out = {
         "meta": {
@@ -361,6 +460,7 @@ def explore(transfer: Transfer) -> dict:
         "describe": {"note": _note(), "stats": _describe(analyzed)},
         "ranges": _ranges(analyzed, types),
         "raw": raw_view,
+        "geo": geo,
         "schema": {
             "source": {
                 "format": fmt,

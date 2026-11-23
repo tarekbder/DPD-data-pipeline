@@ -61,7 +61,10 @@ Body: `{ "edr": { … } }`. `200` with:
 | `describe` | `note`, `stats` |
 | `ranges` | Per-column ranges |
 | `raw` | Same `head`, `tail`, `info`, `describe`, `ranges`, on the values as read (no normalization, native types only; CSV/TSV/XML columns are all strings). Top-level fields are the normalized view |
+| `geo` | Map points, or `null` when no coordinates are found. `source` (`"columns"` or `"geojson"`), `lat_column`, `lon_column` (`null` for GeoJSON), `points` (`[lat, lon, row]`, WGS84; `row` is the 0-based row index), `point_count`, `total_valid`, `sampled` (`true` when thinned to `MAP_MAX_POINTS`, default 5,000), `bounds` (`min_lat`, `max_lat`, `min_lon`, `max_lon`) |
 | `schema` | `source` (format, delimiter, zip inner file, record path, pagination). **Store it and send it back unchanged** to `/v1/download` |
+
+**`geo`**: latitude/longitude columns are found by name (`latitude`/`lat`, `longitude`/`lon`/`lng`/`long`, or names ending in those such as `gps_lat`, `position.lng`), must be numeric, and at least 90% of values must be in range. Rows with missing, out-of-range or `0,0` coordinates are dropped. If no such columns exist, GeoJSON `Point` features are used. Other geometry (lines, polygons, WKT/WKB strings, projected coordinates such as UTM) is not mapped.
 
 **`partial_warning: true`** means the provider reports more data than was fetched (e.g. a total of 47,415 records, but only the first page of 100 came through). Show a "partial data" notice. `false` doesn't guarantee complete data: it only catches responses with fields like `total`, `count` or `page`.
 
