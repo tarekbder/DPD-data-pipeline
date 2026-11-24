@@ -323,7 +323,8 @@ def _sample(lat: pd.Series, lon: pd.Series):
     cell keeps its first row, with `count` = rows in that cell. Every area with data
     is shown; density is carried by `count`. Returns (points, total, cell_deg).
     """
-    ok = lat.notna() & lon.notna() & lat.between(-90, 90) & lon.between(-180, 180) & ~((lat == 0) & (lon == 0))
+    # Points within 1 degree of 0,0 ("null island", open sea) are placeholders, not real locations.
+    ok = lat.notna() & lon.notna() & lat.between(-90, 90) & lon.between(-180, 180) & ~((lat.abs() < 1) & (lon.abs() < 1))
     lat, lon = lat[ok], lon[ok]
     total = int(len(lat))
     rows = np.asarray(lat.index)
@@ -397,12 +398,38 @@ def _point_coords(g):
     return None, None
 
 
+def _mostly_fractional(s: pd.Series) -> bool:
+    """At least half the values have decimals: GPS degrees do, pixel or index columns usually don't."""
+    vals = s.dropna()
+    return len(vals) > 0 and bool((vals % 1 != 0).mean() >= 0.5)
+
+
+def _find_xy(df: pd.DataFrame, numeric: list):
+    """An x/y column pair with the same prefix ("scoordinate.x" + "scoordinate.y", "coord_x" + "coord_y", "x" + "y")
+    that holds degrees: x = longitude (within 180), y = latitude (within 90). Projected coordinates (UTM, metres) fail the ranges."""
+    for x in numeric:
+        if _leaf(x) != "x" and _key(x) != "x":
+            continue
+        y = x[:-1] + ("Y" if x.endswith("X") else "y")
+        if y == x or y not in numeric:
+            continue
+        if _in_range(df[x], 180) and _in_range(df[y], 90) and _mostly_fractional(df[x]) and _mostly_fractional(df[y]):
+            return y, x
+    return None, None
+
+
 def _geo(df: pd.DataFrame, types: dict):
     """Find latitude/longitude columns (or GeoJSON Point geometry) and return map points, or None."""
     numeric = [c for c, t in types.items() if t == "numeric"]
     lat_col = _find_coord(numeric, LAT_NAMES, LAT_SUFFIX)
     lon_col = _find_coord([c for c in numeric if c != lat_col], LON_NAMES, LON_SUFFIX)
     if lat_col and lon_col and _in_range(df[lat_col], 90) and _in_range(df[lon_col], 180):
+        block = _geo_block("columns", lat_col, lon_col, df[lat_col].astype(float), df[lon_col].astype(float))
+        if block:
+            return block
+
+    lat_col, lon_col = _find_xy(df, numeric)
+    if lat_col and lon_col:
         block = _geo_block("columns", lat_col, lon_col, df[lat_col].astype(float), df[lon_col].astype(float))
         if block:
             return block

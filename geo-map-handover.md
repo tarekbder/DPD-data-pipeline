@@ -75,7 +75,7 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
 - **Coordinate order is `[lat, lon]`.** Leaflet takes `[lat, lng]`, so pass as is. MapLibre, Mapbox and GeoJSON take `[lng, lat]`: swap them, or every point lands in the wrong place.
 - **`row` is not a key into `head`/`tail`.** It's the row's position in the whole dataset, but the payload only carries the first and last 50 rows. Fine for showing "Row 12,345" in a tooltip; don't build click-to-open-row on it.
 - **Each point is one cell, not one row** when `sampled` is `true`. Its coordinates are the first real row in that cell, so they're exact, but `count` other rows sit nearby.
-- **Points are cleaned already.** Rows with missing, out-of-range or `0,0` coordinates are dropped server-side. Don't re-filter.
+- **Points are cleaned already.** Rows with missing or out-of-range coordinates, or within 1° of `0,0` (placeholders), are dropped server-side. Don't re-filter.
 - **Not in `raw`.** `geo` is computed once, on the normalized data. There is no `raw.geo`.
 - **Explore only.** `/v1/download` is unchanged; exported files keep their original columns.
 
@@ -83,6 +83,7 @@ The pipeline does all the detection, cleaning and sampling. The UI only renders 
 
 - Columns are matched by name, case-insensitive: `latitude`/`lat` and `longitude`/`lon`/`lng`/`long`, or names ending in those (`gps_lat`, `position.lng`).
 - Both columns must be numeric, with at least 90% of values in range (lat ±90, lon ±180).
+- If no lat/lon names match, an `x`/`y` pair with the same prefix (`scoordinate.x` + `scoordinate.y`) is used: `x` = longitude, `y` = latitude. Only when the values are degrees (in range, mostly with decimals), so UTM or pixel coordinates are skipped. `lat_column`/`lon_column` then name the `y`/`x` columns.
 - If no columns match, GeoJSON `Point` geometry is used.
 - Regions: each point gets the nearest city with 1,000+ inhabitants from the offline GeoNames dataset, weighted by `count`. A point far from any town (sea, countryside) still gets its nearest town, so treat names as approximate.
 - Not mapped: lines, polygons, WKT/WKB strings, projected coordinates (e.g. UTM). These datasets get `geo: null`.
